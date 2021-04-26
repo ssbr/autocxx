@@ -17,6 +17,7 @@
 // limitations under the License.
 
 mod conversion;
+mod cxxbridge;
 mod known_types;
 mod parse_callbacks;
 mod parse_file;
@@ -32,6 +33,7 @@ mod integration_tests;
 use autocxx_parser::{IncludeCppConfig, UnsafePolicy};
 use conversion::{BridgeConverter, CppCodegenResults};
 use parse_callbacks::AutocxxParseCallbacks;
+use parse_file::CppBuildable;
 use proc_macro2::TokenStream as TokenStream2;
 use std::{
     collections::hash_map::DefaultHasher,
@@ -411,45 +413,10 @@ impl IncludeCppEngine {
         Ok(())
     }
 
-    /// Generate C++-side bindings for these APIs. Call `generate` first.
-    pub fn generate_h_and_cxx(&self) -> Result<GeneratedCpp, cxx_gen::Error> {
-        let mut files = Vec::new();
-        match &self.state {
-            State::ParseOnly => panic!("Cannot generate C++ in parse-only mode"),
-            State::NotGenerated => panic!("Call generate() first"),
-            State::Generated(gen_results) => {
-                let rs = gen_results.item_mod.to_token_stream();
-                let opt = cxx_gen::Opt::default();
-                let cxx_generated = cxx_gen::generate_header_and_cc(rs, &opt)?;
-                files.push(CppFilePair {
-                    header: cxx_generated.header,
-                    header_name: "cxxgen.h".to_string(),
-                    implementation: cxx_generated.implementation,
-                });
-
-                match gen_results.additional_cpp_generator {
-                    None => {}
-                    Some(ref additional_cpp) => {
-                        // TODO should probably replace pragma once below with traditional include guards.
-                        let declarations = format!("#pragma once\n{}", additional_cpp.declarations);
-                        files.push(CppFilePair {
-                            header: declarations.as_bytes().to_vec(),
-                            header_name: "autocxxgen.h".to_string(),
-                            implementation: additional_cpp.definitions.as_bytes().to_vec(),
-                        });
-                        info!("Additional C++ decls:\n{}", declarations);
-                        info!("Additional C++ defs:\n{}", additional_cpp.definitions);
-                    }
-                }
-            }
-        };
-        Ok(GeneratedCpp(files))
-    }
-
     /// Return the include directories used for this include_cpp invocation.
-    pub fn include_dirs(&self) -> &Vec<PathBuf> {
+    fn include_dirs(&self) -> impl Iterator<Item = &PathBuf> {
         match &self.state {
-            State::Generated(gen_results) => &gen_results.inc_dirs,
+            State::Generated(gen_results) => gen_results.inc_dirs.iter(),
             _ => panic!("Must call generate() before include_dirs()"),
         }
     }
@@ -467,6 +434,46 @@ impl IncludeCppEngine {
             let tp = tf.into_temp_path();
             preprocess(&tp, &PathBuf::from(output_path), inc_dirs, extra_clang_args).unwrap();
         }
+    }
+}
+
+pub fn do_cxx_cpp_generation(rs: TokenStream2) -> Result<CppFilePair, cxx_gen::Error> {
+    let opt = cxx_gen::Opt::default();
+    let cxx_generated = cxx_gen::generate_header_and_cc(rs, &opt)?;
+    Ok(CppFilePair {
+        header: cxx_generated.header,
+        header_name: "cxxgen.h".to_string(),
+        implementation: cxx_generated.implementation,
+    })
+}
+
+impl CppBuildable for IncludeCppEngine {
+    /// Generate C++-side bindings for these APIs. Call `generate` first.
+    fn generate_h_and_cxx(&self) -> Result<GeneratedCpp, cxx_gen::Error> {
+        let mut files = Vec::new();
+        match &self.state {
+            State::ParseOnly => panic!("Cannot generate C++ in parse-only mode"),
+            State::NotGenerated => panic!("Call generate() first"),
+            State::Generated(gen_results) => {
+                let rs = gen_results.item_mod.to_token_stream();
+                files.push(do_cxx_cpp_generation(rs)?);
+                match gen_results.additional_cpp_generator {
+                    None => {}
+                    Some(ref additional_cpp) => {
+                        // TODO should probably replace pragma once below with traditional include guards.
+                        let declarations = format!("#pragma once\n{}", additional_cpp.declarations);
+                        files.push(CppFilePair {
+                            header: declarations.as_bytes().to_vec(),
+                            header_name: "autocxxgen.h".to_string(),
+                            implementation: additional_cpp.definitions.as_bytes().to_vec(),
+                        });
+                        info!("Additional C++ decls:\n{}", declarations);
+                        info!("Additional C++ defs:\n{}", additional_cpp.definitions);
+                    }
+                }
+            }
+        };
+        Ok(GeneratedCpp(files))
     }
 }
 
