@@ -15,7 +15,7 @@
 mod function_wrapper_cpp;
 pub(crate) mod type_to_cpp;
 
-use crate::types::QualifiedName;
+use crate::{types::QualifiedName, CppFilePair};
 use indoc::indoc;
 use itertools::Itertools;
 use std::collections::HashSet;
@@ -74,14 +74,6 @@ struct AdditionalFunction {
     headers: Vec<Header>,
 }
 
-/// Details of additional generated C++.
-pub(crate) struct CppCodegenResults {
-    /// Declarations, for inclusion in some suitable header file.
-    pub(crate) declarations: String,
-    /// Definitions, for inclusion in some suitable compilation unit.
-    pub(crate) definitions: String,
-}
-
 /// Generates additional C++ glue functions needed by autocxx.
 /// In some ways it would be preferable to be able to pass snippets
 /// of C++ through to `cxx` for inclusion in the C++ file which it
@@ -97,7 +89,7 @@ impl CppCodeGenerator {
     pub(crate) fn generate_cpp_code(
         inclusions: String,
         apis: &[Api<FnAnalysis>],
-    ) -> Result<Option<CppCodegenResults>, ConvertError> {
+    ) -> Result<Option<CppFilePair>, ConvertError> {
         let mut gen = CppCodeGenerator::new(inclusions);
         gen.add_needs(apis.iter().filter_map(|api| api.additional_cpp()))?;
         Ok(gen.generate())
@@ -129,7 +121,7 @@ impl CppCodeGenerator {
         Ok(())
     }
 
-    fn generate(&self) -> Option<CppCodegenResults> {
+    fn generate(&self) -> Option<CppFilePair> {
         if self.additional_functions.is_empty() {
             None
         } else {
@@ -148,9 +140,12 @@ impl CppCodeGenerator {
             );
             let definitions = self.concat_additional_items(|x| &x.definition);
             let definitions = format!("#include \"autocxxgen.h\"\n{}", definitions);
-            Some(CppCodegenResults {
-                declarations,
-                definitions,
+            log::info!("Additional C++ decls:\n{}", declarations);
+            log::info!("Additional C++ defs:\n{}", definitions);
+            Some(CppFilePair {
+                header: declarations.into_bytes(),
+                implementation: definitions.into_bytes(),
+                header_name: "autocxxgen.h".into(),
             })
         }
     }
