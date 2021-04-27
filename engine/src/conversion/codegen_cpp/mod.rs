@@ -70,7 +70,6 @@ impl Header {
 struct AdditionalFunction {
     type_definition: Option<String>, // are output before main declarations
     declaration: Option<String>,
-    definition: Option<String>,
     headers: Vec<Header>,
 }
 
@@ -145,19 +144,11 @@ impl CppCodeGenerator {
                 "#pragma once\n\n{}\n{}\n{}\n{}",
                 headers, self.inclusions, type_definitions, declarations
             );
-            let definitions = self.concat_additional_items(|x| x.definition.as_ref());
-            // We may have no definitions, in which case avoid gemerating
-            // a file to avoid a needless C++ compiler invocation at a later stage.
             let header_name = format!("autocxxgen_{}.h", self.mod_name);
-            let implementation = definitions.map(|definitions| {
-                let definitions = format!("#include \"{}\"\n\n{}", header_name, definitions);
-                log::info!("Additional C++ defs:\n{}", definitions);
-                definitions.into_bytes()
-            });
             log::info!("Additional C++ decls:\n{}", declarations);
             Some(CppFilePair {
                 header: declarations.into_bytes(),
-                implementation,
+                implementation: None,
                 header_name,
             })
         }
@@ -191,7 +182,6 @@ impl CppCodeGenerator {
         self.additional_functions.push(AdditionalFunction {
             type_definition: None,
             declaration: Some(declaration),
-            definition: None,
             headers: vec![
                 Header::system("memory"),
                 Header::system("string"),
@@ -277,15 +267,13 @@ impl CppCodeGenerator {
             underlying_function_call =
                 format!("return {}", ret.cpp_conversion(&underlying_function_call)?);
         };
-        let definition = Some(format!(
+        let declaration = Some(format!(
             "{} {{ {}; }}",
             declaration, underlying_function_call,
         ));
-        let declaration = Some(format!("{};", declaration));
         self.additional_functions.push(AdditionalFunction {
             type_definition: None,
             declaration,
-            definition,
             headers: vec![Header::system("memory")],
         });
         Ok(())
@@ -301,7 +289,6 @@ impl CppCodeGenerator {
         self.additional_functions.push(AdditionalFunction {
             type_definition: Some(format!("typedef {} {};", definition, our_name)),
             declaration: None,
-            definition: None,
             headers: Vec::new(),
         })
     }
