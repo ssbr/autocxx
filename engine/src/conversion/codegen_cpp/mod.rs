@@ -132,36 +132,50 @@ impl CppCodeGenerator {
                 .flatten()
                 .collect();
             let headers = headers.iter().map(|x| x.include_stmt()).join("\n");
-            let type_definitions = self.concat_additional_items(|x| x.type_definition.as_ref());
-            let declarations = self.concat_additional_items(|x| x.declaration.as_ref());
+            let type_definitions = self
+                .concat_additional_items(|x| x.type_definition.as_ref())
+                .unwrap_or_default();
+            let declarations = self
+                .concat_additional_items(|x| x.declaration.as_ref())
+                .unwrap_or_default();
             let declarations = format!(
                 "{}\n{}\n{}\n{}",
                 headers, self.inclusions, type_definitions, declarations
             );
             let definitions = self.concat_additional_items(|x| x.definition.as_ref());
-            let definitions = format!("#include \"autocxxgen.h\"\n{}", definitions);
+            // We may have no definitions, in which case avoid gemerating
+            // a file to avoid a needless C++ compiler invocation at a later stage.
+            let implementation = definitions.map(|definitions| {
+                let s = format!("#include \"autocxxgen.h\"\n{}", definitions);
+                log::info!("Additional C++ defs:\n{}", definitions);
+                s.into_bytes()
+            });
             log::info!("Additional C++ decls:\n{}", declarations);
-            log::info!("Additional C++ defs:\n{}", definitions);
             Some(CppFilePair {
                 header: declarations.into_bytes(),
-                implementation: definitions.into_bytes(),
+                implementation,
                 header_name: "autocxxgen.h".into(),
             })
         }
     }
 
-    fn concat_additional_items<F>(&self, field_access: F) -> String
+    fn concat_additional_items<F>(&self, field_access: F) -> Option<String>
     where
         F: FnMut(&AdditionalFunction) -> Option<&String>,
     {
-        let mut s = self
+        let mut items = self
             .additional_functions
             .iter()
             .map(field_access)
             .flatten()
-            .join("\n");
-        s.push('\n');
-        s
+            .peekable();
+        if items.peek().is_none() {
+            None
+        } else {
+            let mut s = items.join("\n");
+            s.push('\n');
+            Some(s)
+        }
     }
 
     fn generate_string_constructor(&mut self) {
