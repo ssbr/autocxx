@@ -16,6 +16,7 @@ mod function_wrapper_cpp;
 pub(crate) mod type_to_cpp;
 
 use crate::types::QualifiedName;
+use indoc::indoc;
 use itertools::Itertools;
 use std::collections::HashSet;
 use syn::Type;
@@ -169,16 +170,15 @@ impl CppCodeGenerator {
     }
 
     fn generate_string_constructor(&mut self) {
-        let declaration = "std::unique_ptr<std::string> make_string(::rust::Str str)";
-        let definition = format!(
-            "{} {{ return std::make_unique<std::string>(std::string(str)); }}",
-            declaration
-        );
-        let declaration = format!("{};", declaration);
+        // Inline so that multiple FFI mods don't hit ODR violations
+        let declaration = indoc! {"
+            inline std::unique_ptr<std::string> autocxx_make_string(::rust::Str str)
+            { return std::make_unique<std::string>(std::string(str)); }"}
+        .into();
         self.additional_functions.push(AdditionalFunction {
             type_definition: "".into(),
             declaration,
-            definition,
+            definition: "".into(),
             headers: vec![
                 Header::system("memory"),
                 Header::system("string"),
