@@ -83,22 +83,25 @@ struct AdditionalFunction {
 pub(crate) struct CppCodeGenerator {
     additional_functions: Vec<AdditionalFunction>,
     inclusions: String,
+    mod_name: String,
 }
 
 impl CppCodeGenerator {
     pub(crate) fn generate_cpp_code(
         inclusions: String,
         apis: &[Api<FnAnalysis>],
+        mod_name: String,
     ) -> Result<Option<CppFilePair>, ConvertError> {
-        let mut gen = CppCodeGenerator::new(inclusions);
+        let mut gen = CppCodeGenerator::new(inclusions, mod_name);
         gen.add_needs(apis.iter().filter_map(|api| api.additional_cpp()))?;
         Ok(gen.generate())
     }
 
-    fn new(inclusions: String) -> Self {
+    fn new(inclusions: String, mod_name: String) -> Self {
         CppCodeGenerator {
             additional_functions: Vec::new(),
             inclusions,
+            mod_name,
         }
     }
 
@@ -139,22 +142,23 @@ impl CppCodeGenerator {
                 .concat_additional_items(|x| x.declaration.as_ref())
                 .unwrap_or_default();
             let declarations = format!(
-                "{}\n{}\n{}\n{}",
+                "#pragma once\n\n{}\n{}\n{}\n{}",
                 headers, self.inclusions, type_definitions, declarations
             );
             let definitions = self.concat_additional_items(|x| x.definition.as_ref());
             // We may have no definitions, in which case avoid gemerating
             // a file to avoid a needless C++ compiler invocation at a later stage.
+            let header_name = format!("autocxxgen_{}.h", self.mod_name);
             let implementation = definitions.map(|definitions| {
-                let s = format!("#include \"autocxxgen.h\"\n{}", definitions);
+                let definitions = format!("#include \"{}\"\n\n{}", header_name, definitions);
                 log::info!("Additional C++ defs:\n{}", definitions);
-                s.into_bytes()
+                definitions.into_bytes()
             });
             log::info!("Additional C++ decls:\n{}", declarations);
             Some(CppFilePair {
                 header: declarations.into_bytes(),
                 implementation,
-                header_name: "autocxxgen.h".into(),
+                header_name,
             })
         }
     }
